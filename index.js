@@ -866,32 +866,33 @@ wss.on("connection", (ws) => {
     // Bu method, genellikle aktif oyuncu sayısını istemciye bildirmek için kullanılır.
     // 'spectators.length' yerine 'players.length' kullanmak daha doğru olabilir
     // eğer sadece masadaki oyuncuları kastediyorsan.
- // PLAYERS LENGTH
-   // PLAYERS LENGTH
-    // Bu method, genellikle aktif oyuncu sayısını istemciye bildirmek için kullanılır.
     if (result.method === "playersLength") {
       const gameId = result.gameId;
       const game = games[gameId];
-
-      // Eğer 'game' objesi tanımsızsa, işlemi atla ve hata logu yaz
-      if (!game) {
-        console.log(`Game veya oyuncular/izleyiciler tanımsız, playersLength işlemi atlandı. Game ID: ${gameId}`);
-        return; // 'game' tanımsızsa işlemi durdur
+      if (!game || !game.players) { // game.players'ın da varlığını kontrol et
+        console.warn(`Game veya players tanımsız, playersLength işlemi atlandı. Game ID: ${gameId}`);
+        const con = clients[clientId]?.ws;
+        if (con && con.readyState === WebSocket.OPEN) {
+            con.send(JSON.stringify({ method: "error", message: "Oyun durumu alınamadı." }));
+        }
+        return;
       }
-
-      // Masadaki aktif oyuncu sayısını almak için 'game.players.length' kullanıldı.
-      // Eğer hem oyuncular hem de izleyiciler dahil tüm bağlantıların sayısını istiyorsan
-      // 'game.clients.length' veya 'game.spectators.length' kullanabilirsin.
-      const playersLength = game.players.length; 
+      const playersLength = game.players.length; // Masadaki aktif oyuncu sayısı
+                                                    // Eğer hem oyuncular hem de izleyiciler dahilse 'game.spectators.length' kullan.
 
       const payLoadLength = {
         method: "playersLength",
         playersLength: playersLength,
-        gameId: gameId, // Hangi oyunun uzunluğu olduğunu belirtmek için eklendi
+        gameId: gameId, // Hangi oyunun uzunluğu olduğunu belirt
       };
 
-      ws.send(JSON.stringify(payLoadLength));
+      const con = clients[clientId]?.ws;
+      if (con && con.readyState === WebSocket.OPEN) {
+          con.send(JSON.stringify(payLoadLength));
+      }
     }
+  });
+});
 
 // GUID oluşturucu (Globally Unique Identifier)
 const guid = () => {
