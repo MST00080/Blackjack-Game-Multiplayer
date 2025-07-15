@@ -3,29 +3,22 @@ const express = require("express");
 const app = express();
 const server = require("http").createServer(app);
 const PORT = process.env.PORT || 8080;
-const WebSocket = require("ws")
+const WebSocket = require("ws");
 const WEB_URL = process.env.NODE_ENV === "production" ? `https://${process.env.DOMAIN_NAME}/` : `http://localhost:${PORT}/`;
 
-const wss = new WebSocket.Server({ server:server })
-
+const wss = new WebSocket.Server({ server: server });
 
 const cacheDuration = 1000 * 60 * 60 * 24 * 365; // 1 year
 
-// Serve all the static files, (ex. index.html app.js style.css)
 app.use(express.static("public", {
   maxAge: cacheDuration,
   setHeaders: (res, path) => {
-    // Set caching headers
     res.setHeader('Cache-Control', `public, max-age=${cacheDuration}`);
     res.setHeader('Expires', new Date(Date.now() + cacheDuration).toUTCString());
   }
 }));
 
-server.listen(PORT, () =>
-  console.log(`Listening on ${process.env.PORT} or 8080`)
-);
-
-
+server.listen(PORT, () => console.log(`Listening on ${process.env.PORT} or 8080`));
 
 // hashmap clients
 const clients = {};
@@ -36,22 +29,16 @@ const spectators = {};
 let dealer = null;
 let gameOn = null;
 
-
-
-wss.on("connection", (ws) => { // wsServer || wss AND request || connection
-  // Someone trying to connect
-  // const connection = connection.accept(null, connection.origin);
-  ws.on("open", () => console.log("opened")); // connection || wss
+wss.on("connection", (ws) => {
+  ws.on("open", () => console.log("opened"));
   ws.on("close", () => {
-    // connection || wss
     console.log("closed");
   });
 
   ws.on("message", (message) => {
-    // connection || wss
     const result = JSON.parse(message);
 
-    // a user want to create a new game
+    // CREATE game
     if (result.method === "create") {
       const clientId = result.clientId;
       const playerSlot = result.playerSlot;
@@ -63,26 +50,16 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
         res.sendFile(__dirname + "/public/index.html");
       });
 
-      // .route.path
       games[gameId] = {
         id: gameId,
         clients: [],
         players: [],
         dealer: dealer,
         gameOn: gameOn,
-        player: player,
+        player: null,
         spectators: [],
         playerSlot: playerSlot,
-        playerSlotHTML: [
-          // 7 objectes because the playerSlot has a length of 7
-          {},
-          {},
-          {},
-          {},
-          {},
-          {},
-          {},
-        ],
+        playerSlotHTML: [{},{},{},{},{},{},{}],
       };
 
       const payLoad = {
@@ -92,11 +69,11 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
         offline: offline,
       };
 
-      const con = clients[clientId].ws;
-      con.send(JSON.stringify(payLoad));
+      const con = clients[clientId]?.ws;
+      if (con) con.send(JSON.stringify(payLoad));
     }
 
-    // a client want to join
+    // JOIN game
     if (result.method === "join") {
       const nickname = result.nickname;
       const avatar = result.avatar;
@@ -104,33 +81,36 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       const roomId = result.roomId;
       let theClient = result.theClient;
       const clientId = result.clientId;
+
       const game = games[gameId];
-      let players = game.players;
-      const spectators = game.spectators;
-      const playerSlot = game.playerSlot;
-      const playerSlotHTML = game.playerSlotHTML;
+      if (!game) {
+        console.warn("Game undefined, join işlemi atlandı");
+        return;
+      }
+
+      let players = game.players || [];
+      let spectators = game.spectators || [];
+      const playerSlot = game.playerSlot || [];
+      const playerSlotHTML = game.playerSlotHTML || [];
 
       theClient.nickname = nickname;
       theClient.avatar = avatar;
 
-      if (game.spectators.length >= 7) {
+      if (spectators.length >= 7) {
         // Max players reached
         return;
       }
 
-      // Push unique Id to the client
       theClient.clientId = clientId;
-      // Push client to players array
-      // game.players.push(theClient)
-      game.spectators.push(theClient);
+      spectators.push(theClient);
 
-      // Assign theClient to game.spectators[i]
-      for (let i = 0; i < game.spectators.length; i++) {
-        if (game.spectators[i].clientId === clientId) {
-          // theClient = game.spectators[i]
-          game.spectators[i] = theClient;
+      for (let i = 0; i < spectators.length; i++) {
+        if (spectators[i].clientId === clientId) {
+          spectators[i] = theClient;
         }
       }
+
+      game.spectators = spectators;
 
       const payLoad = {
         method: "join",
@@ -141,28 +121,22 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
         roomId: roomId,
       };
 
-      // loop through all clients and tell them that people has joined
-      // if(game.players.length === 0) {
-      if (!game.gameOn === true) {
-        game.spectators.forEach((c) => {
-          clients[c.clientId].ws.send(JSON.stringify(payLoad));
+      if (!game.gameOn) {
+        spectators.forEach((c) => {
+          clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
         });
       }
-
-      // }
 
       const payLoadClient = {
         method: "joinClient",
         theClient: theClient,
         game: game,
       };
-      // Send theClient to THE CLIENT
-      if (!game.gameOn === true) {
-        clients[clientId].ws.send(JSON.stringify(payLoadClient));
+      if (!game.gameOn) {
+        clients[clientId]?.ws.send(JSON.stringify(payLoadClient));
       }
 
       const newPlayer = theClient;
-      // Important to send this payLoad last, because it needs to know the the clientId
       const payLoadClientArray = {
         method: "updateClientArray",
         players: players,
@@ -172,37 +146,35 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
         playerSlotHTML: playerSlotHTML,
       };
 
-      if (!game.gameOn === true) {
-        game.spectators.forEach((c) => {
-          clients[c.clientId].ws.send(JSON.stringify(payLoadClientArray));
+      if (!game.gameOn) {
+        spectators.forEach((c) => {
+          clients[c.clientId]?.ws.send(JSON.stringify(payLoadClientArray));
         });
       }
 
-      // If a player joins mid-game
       const payLoadMidGame = {
         method: "joinMidGame",
         theClient: theClient,
         game: game,
       };
 
-      if (game.gameOn === true) {
-        clients[clientId].ws.send(JSON.stringify(payLoadMidGame));
+      if (game.gameOn) {
+        clients[clientId]?.ws.send(JSON.stringify(payLoadMidGame));
       }
 
-      // Send this to ALL clients, to let them know that a new spectator joined
       const payLoadMidGameUpdate = {
         method: "joinMidGameUpdate",
         spectators: spectators,
         newPlayer: newPlayer,
       };
-      if (game.gameOn === true) {
-        game.spectators.forEach((c) => {
-          clients[c.clientId].ws.send(JSON.stringify(payLoadMidGameUpdate));
+      if (game.gameOn) {
+        spectators.forEach((c) => {
+          clients[c.clientId]?.ws.send(JSON.stringify(payLoadMidGameUpdate));
         });
       }
     }
 
-    // bets
+    // BET
     if (result.method === "bet") {
       const players = result.players;
       const spectators = result.spectators;
@@ -213,10 +185,11 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       };
 
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
     }
 
+    // DECK
     if (result.method === "deck") {
       const spectators = result.spectators;
       const deck = result.deck;
@@ -231,10 +204,11 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       };
 
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
     }
 
+    // IS READY
     if (result.method === "isReady") {
       const theClient = result.theClient;
       const players = result.players;
@@ -247,10 +221,11 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       };
 
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
     }
 
+    // HAS LEFT
     if (result.method === "hasLeft") {
       const theClient = result.theClient;
       const players = result.players;
@@ -264,10 +239,11 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       };
 
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
     }
 
+    // CURRENT PLAYER
     if (result.method === "currentPlayer") {
       const players = result.players;
       const player = result.player;
@@ -279,20 +255,19 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
         player: player,
       };
 
-      if (dealersTurn === false) {
+      if (!dealersTurn) {
         spectators.forEach((c) => {
-          clients[c.clientId].ws.send(JSON.stringify(payLoad));
+          clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
         });
-      }
-
-      if (dealersTurn === true) {
-        players.pop(players.slice(-1)[0]);
+      } else {
+        if (players.length > 0) players.pop();
         spectators.forEach((c) => {
-          clients[c.clientId].ws.send(JSON.stringify(payLoad));
+          clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
         });
       }
     }
 
+    // UPDATE
     if (result.method === "update") {
       const players = result.players;
       const dealer = result.dealer;
@@ -309,13 +284,15 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       };
 
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
     }
 
+    // THE PLAY
     if (result.method === "thePlay") {
       const gameId = result.gameId;
       const game = games[gameId];
+      if (!game) return;
       const player = result.player;
       const dealersTurn = result.dealersTurn;
       const currentPlayer = result.currentPlayer;
@@ -327,13 +304,14 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
         players: player,
       };
 
-      if (dealersTurn === false) {
+      if (!dealersTurn) {
         game.players.forEach((c) => {
-          clients[c.clientId].ws.send(JSON.stringify(payLoad));
+          clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
         });
       }
     }
 
+    // SHOW SUM
     if (result.method === "showSum") {
       const players = result.players;
       const spectators = result.spectators;
@@ -344,29 +322,30 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       };
 
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
     }
 
+    // JOIN TABLE
     if (result.method === "joinTable") {
       let theClient = result.theClient;
       const user = result.theClient;
       const theSlot = result.theSlot;
       const gameId = result.gameId;
       const game = games[gameId];
-      const spectators = result.spectators;
-      const players = result.players;
-      const playerSlotHTML = result.playerSlotHTML;
+      if (!game) return;
+      const spectators = result.spectators || [];
+      const players = result.players || [];
+      const playerSlotHTML = result.playerSlotHTML || [];
 
       // Push client to players array
       players.push(theClient);
       // Push client Id to playerSlotHTML array
-      playerSlotHTML[theSlot] = clientId;
+      playerSlotHTML[theSlot] = theClient.clientId;
 
-      // Assign theClient to game.players[i]
+      // Update player in players array by clientId
       for (let i = 0; i < players.length; i++) {
-        if (players[i].clientId === clientId) {
-          // theClient = game.players[i]
+        if (players[i].clientId === theClient.clientId) {
           players[i] = theClient;
         }
       }
@@ -386,11 +365,11 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       };
 
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
-
     }
 
+    // UPDATE PLAYER CARDS
     if (result.method === "updatePlayerCards") {
       const resetCards = result.resetCards;
       const players = result.players;
@@ -404,16 +383,18 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
         resetCards: resetCards,
       };
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
     }
 
+    // UPDATE DEALER CARDS
     if (result.method === "updateDealerCards") {
       const players = result.players;
       const spectators = result.spectators;
       const player = result.player;
       const dealer = result.dealer;
       const dealersTurn = result.dealersTurn;
+
       const payLoad = {
         method: "updateDealerCards",
         player: player,
@@ -421,107 +402,104 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
         players: players,
         dealersTurn: dealersTurn,
       };
-      if (dealersTurn === false) {
-        spectators.forEach((c) => {
-          clients[c.clientId].ws.send(JSON.stringify(payLoad));
-        });
-      }
 
-      if (dealersTurn === true) {
-        players.pop(players.slice(-1)[0]);
+      if (!dealersTurn) {
         spectators.forEach((c) => {
-          clients[c.clientId].ws.send(JSON.stringify(payLoad));
+          clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
+        });
+      } else {
+        if (players.length > 0) players.pop();
+        spectators.forEach((c) => {
+          clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
         });
       }
     }
 
+    // DEALERS TURN
     if (result.method === "dealersTurn") {
       const dealersTurn = result.dealersTurn;
       const spectators = result.spectators;
+
       const payLoad = {
         method: "dealersTurn",
         dealersTurn: dealersTurn,
       };
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
     }
 
+    // TERMINATE
     if (result.method === "terminate") {
       let gameId = result.gameId;
       let game = games[gameId];
-      let spectators = result.spectators;
-      let players = result.players;
+      let spectators = result.spectators || [];
+      let players = result.players || [];
       const theClient = result.theClient;
-      let playerSlotHTML = result.playerSlotHTML;
+      let playerSlotHTML = result.playerSlotHTML || [];
       const reload = result.reload;
       const gameOn = result.gameOn;
 
-      const oldPlayerIndex = spectators.findIndex(
-        (spectators) => spectators.clientId === theClient.clientId
-      );
-
-      // To prevent error when user disconnects outside a game
-      if (game === undefined) {
+      if (!game) {
         game = {
-          spectators: {},
-          players: {},
-          playerSlotHTML: {},
+          spectators: [],
+          players: [],
+          playerSlotHTML: [],
         };
       }
 
-      // Get what index the player is in so we can later delete him from the table on the client side
-      let playerSlotIndex = null;
+      const clientId = theClient?.clientId;
+      if (!clientId) return;
 
-      // Append hasLeft to the spectators array
+      const oldPlayerIndex = spectators.findIndex(
+        (spectator) => spectator.clientId === clientId
+      );
+
+      // Eğer player hasLeft ise spectator'da da işaretle
       for (let i = 0; i < players.length; i++) {
         for (let s = 0; s < spectators.length; s++) {
-          if (players[i].hasLeft === true) {
-            if (spectators[s].clientId === players[i].clientId) {
-              spectators[s].hasLeft = true;
-            }
+          if (players[i]?.hasLeft === true && spectators[s].clientId === players[i].clientId) {
+            spectators[s].hasLeft = true;
           }
         }
       }
 
-      // Terminate player from playerSlotHTML
+      // playerSlotHTML'de bu clientId varsa kaldır
+      let playerSlotIndex = null;
       for (let i = 0; i < playerSlotHTML.length; i++) {
         if (clientId === playerSlotHTML[i]) {
           playerSlotIndex = i;
         }
       }
 
-      // If spectators.length === 1 and dealers is in PLAYERS array, splice dealer in both in PLAYERS array
-      if (spectators.length === 1 && players.some((e) => e.hiddenCard)) {
-        players.splice(-1)[0];
+      // Eğer sadece 1 spectator varsa ve oyuncular arasında dealer var ise dealer çıkar
+      if (spectators.length === 1 && players.some(e => e.hiddenCard)) {
+        players.splice(players.findIndex(e => e.hiddenCard), 1);
       }
 
-      if (gameOn === false || spectators.length === 1) {
-        // if(spectators.length === 1) gameOn = false;
-
-        // If player reloads page, remove him from spectators array
+      if (!gameOn || spectators.length === 1) {
+        // Sayfa reload ise spectator'dan çıkar
         if (reload === true) {
-          // Terminate player from spectators
           for (let i = 0; i < spectators.length; i++) {
             if (clientId === spectators[i].clientId) {
               spectators.splice(i, 1);
-              // spectators.splice(i, 1)
+              break;
             }
           }
         }
 
-        // Terminate player from playerSlotHTML
+        // playerSlotHTML'den çıkar
         for (let i = 0; i < playerSlotHTML.length; i++) {
           if (clientId === playerSlotHTML[i]) {
-            // playerSlotIndex = i;
             playerSlotHTML[i] = {};
           }
         }
-        // Terminate player from players array
+
+        // players'dan çıkar
         for (let i = 0; i < players.length; i++) {
           if (clientId === players[i].clientId) {
             players.splice(i, 1);
-            // players.splice(i, 1)
+            break;
           }
         }
       }
@@ -542,19 +520,19 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
       };
 
       spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
+        clients[c.clientId]?.ws.send(JSON.stringify(payLoad));
       });
-
     }
 
+    // PLAYERS LENGTH
     if (result.method === "playersLength") {
       const gameId = result.gameId;
       const game = games[gameId];
       if (!game || !game.spectators) {
-  console.warn('Game veya spectators tanımsız, işlem atlandı.');
-  return;
-}
-const playersLength = game.spectators.length;
+        console.warn('Game veya spectators tanımsız, işlem atlandı.');
+        return;
+      }
+      const playersLength = game.spectators.length;
       const payLoadLength = {
         method: "playersLength",
         playersLength: playersLength,
@@ -563,167 +541,14 @@ const playersLength = game.spectators.length;
       ws.send(JSON.stringify(payLoadLength));
     }
 
-    if (result.method === "resetRound") {
-      const spectators = result.spectators;
-      const theClient = result.theClient;
-
-      const payLoad = {
-        method: "resetRound",
-        theClient: theClient,
-      };
-
-      spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
-      });
-    }
-
-    if (result.method === "playerResult") {
-      const spectators = result.spectators;
-      const players = result.players;
-
-      const payLoad = {
-        method: "playerResult",
-        players: players,
-      };
-
-      spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
-      });
-    }
-
-    if (result.method === "playerResultNatural") {
-      const spectators = result.spectators;
-      const players = result.players;
-      const playerNaturalIndex = result.playerNaturalIndex;
-
-      const payLoad = {
-        method: "playerResultNatural",
-        players: players,
-        playerNaturalIndex: playerNaturalIndex,
-      };
-
-      spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
-      });
-    }
-
-    if (result.method === "finalCompare") {
-      const spectators = result.spectators;
-      const gameId = result.gameId;
-      const game = games[gameId];
-      const players = result.players;
-      game.players = players;
-
-      const payLoad = {
-        method: "finalCompare",
-        // "players": players
-      };
-
-      spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
-      });
-    }
-
-    if (result.method === "resetGameState") {
-      const spectators = result.spectators;
-      const gameId = result.gameId;
-      const game = games[gameId];
-      const players = result.players;
-      game.players = players;
-
-      const payLoad = {
-        method: "resetGameState",
-        game: game,
-      };
-
-      spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
-      });
-    }
-
-    if (result.method === "wsDealCards") {
-      dealCards();
-    }
-
-    if (result.method === "getRoute") {
-      const getRouteId = result.getRouteId;
-      let isRouteDefined = null;
-
-      for (let i = 3; i < app._router.stack.length; i++) {
-        if (app._router.stack[i].route.path === "/" + getRouteId) {
-          isRouteDefined = true;
-        } else {
-          isRouteDefined = false;
-        }
-      }
-      // if route is not available, redirect to home page
-      const payLoadRoute = {
-        method: "redirect",
-        isRouteDefined: isRouteDefined,
-      };
-
-      if (isRouteDefined === false) {
-        ws.send(JSON.stringify(payLoadRoute));
-      }
-    }
-
-    if (result.method === "dealersHiddenCard") {
-      const spectators = result.spectators;
-      const dealersHiddenCard = result.dealersHiddenCard;
-
-      const payLoad = {
-        method: "dealersHiddenCard",
-        dealersHiddenCard: dealersHiddenCard,
-      };
-
-      spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
-      });
-    }
-
-    if (result.method === "startTimer") {
-      const spectators = result.spectators;
-
-      const payLoad = {
-        method: "startTimer",
-      };
-
-      spectators.forEach((c) => {
-        clients[c.clientId].ws.send(JSON.stringify(payLoad));
-      });
-    }
-
-    if (result.method === "syncGame") {
-      const gameId = result.gameId;
-      let game = games[gameId];
-      const gameOn = result.gameOn;
-      const dealer = result.dealer;
-      const players = result.players;
-      const player = result.player;
-      const spectators = result.spectators;
-      const playerSlotHTML = result.playerSlotHTML;
-
-      if (game === undefined) {
-        game = {};
-      }
-      // Sync players & spectators arrays
-      game.gameOn = gameOn;
-      game.dealer = dealer;
-      game.players = players;
-      game.player = player;
-      game.spectators = spectators;
-      game.playerSlotHTML = playerSlotHTML;
-    }
   });
-  // The ClientId
-  const clientId = guid();
-  // The Client
-  clients[clientId] = {
-    ws: ws,
-  };
 
-  // The client object
-  let theClient = {
+  // Yeni clientId oluştur, clients listesine ekle
+  const clientId = guid();
+  clients[clientId] = { ws: ws };
+
+  // theClient objesini yarat
+  const theClient = {
     nickname: "",
     avatar: "",
     cards: [],
@@ -734,41 +559,25 @@ const playersLength = game.spectators.length;
     isReady: false,
     blackjack: false,
     hasLeft: false,
-  };
-  let player = null;
-  // The players Array
-  players[theClient] = {
-    ws: ws,
-  };
-  players[player] = {
-    ws: ws,
-  };
-  // The spectator Array
-  spectators[theClient] = {
-    ws: ws,
+    clientId: clientId,
   };
 
-  // Send this to client
   const payLoad = {
     method: "connect",
     clientId: clientId,
     theClient: theClient,
   };
 
-  // Send the payLoad to the client
   ws.send(JSON.stringify(payLoad));
 });
 
-// Generates unique guid (i.e. unique user ID)
+// GUID oluşturucu
 const guid = () => {
-  const s4 = () =>
-    Math.floor((1 + Math.random()) * 0x10000)
-      .toString(16)
-      .substring(1);
+  const s4 = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
   return `${s4() + s4()}-${s4()}-${s4()}-${s4()}-${s4() + s4() + s4()}`;
 };
 
-// Random Part ID
+// Random oda kodu
 function partyId() {
   var result = "";
   var characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -791,6 +600,6 @@ app.get("/:id", (req, res) => {
   res.sendFile(__dirname + "/public/index.html");
 });
 
-app.get("*", function (req, res) {
+app.get("*", (req, res) => {
   res.redirect("/");
 });
