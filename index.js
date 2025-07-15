@@ -550,8 +550,11 @@ wss.on("connection", (ws) => { // wsServer || wss AND request || connection
     if (result.method === "playersLength") {
       const gameId = result.gameId;
       const game = games[gameId];
-      const playersLength = game.spectators.length;
-
+      if (!game || !game.spectators) {
+  console.warn('Game veya spectators tanımsız, işlem atlandı.');
+  return;
+}
+const playersLength = game.spectators.length;
       const payLoadLength = {
         method: "playersLength",
         playersLength: playersLength,
